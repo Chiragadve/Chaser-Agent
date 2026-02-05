@@ -1,0 +1,21 @@
+{
+  "name": "chaser-agent-backend",
+  "version": "1.0.0",
+  "description": "Backend API for Automated Chaser Agent - sends email reminders for tasks",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.0",
+    "axios": "^1.6.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "node-cron": "^3.0.3"
+  },
+  "keywords": ["chaser", "email", "automation", "reminder"],
+  "author": "",
+  "license": "MIT"
+}
