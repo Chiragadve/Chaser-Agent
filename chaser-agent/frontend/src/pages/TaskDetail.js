@@ -158,6 +158,12 @@ function TaskDetail() {
                             {task.last_chaser_sent_at ? formatDate(task.last_chaser_sent_at) : 'Never'}
                         </div>
                     </div>
+                    {task.slack_channel && (
+                        <div className="detail-item">
+                            <div className="detail-label">Slack Channel</div>
+                            <div className="detail-value">#{task.slack_channel}</div>
+                        </div>
+                    )}
                 </div>
             </div>
 

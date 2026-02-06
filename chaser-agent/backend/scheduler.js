@@ -47,7 +47,9 @@ async function processPendingChasers() {
           assignee_name,
           assignee_email,
           due_date,
-          status
+          status,
+          priority,
+          slack_channel
         )
       `)
             .eq('status', 'pending')
@@ -84,6 +86,34 @@ async function processPendingChasers() {
                 const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
                 const backendUrl = `http://localhost:${process.env.PORT || 3001}`;
 
+                // Format due date for display
+                const dueDate = chaser.tasks?.due_date
+                    ? new Date(chaser.tasks.due_date).toLocaleString('en-US', {
+                        weekday: 'long',
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric',
+                        hour: 'numeric',
+                        minute: '2-digit'
+                    })
+                    : 'Soon';
+
+                // Create Slack-formatted message using mrkdwn
+                const slackMessage = `🔔 *Task Reminder*
+
+Hey ${chaser.tasks?.assignee_name || 'there'}! 👋
+
+This is a friendly reminder about your upcoming task:
+
+📋 *Task:* ${chaser.tasks?.title || 'Untitled Task'}
+⚡ *Priority:* ${(chaser.tasks?.priority || 'medium').charAt(0).toUpperCase() + (chaser.tasks?.priority || 'medium').slice(1)}
+📅 *Due Date:* ${dueDate}
+
+<${frontendUrl}/tasks/${chaser.task_id}|🔗 View Task>
+
+_Best regards,_
+*Chaser Agent*`;
+
                 const payload = {
                     queue_id: chaser.id,
                     task_id: chaser.task_id,
@@ -91,6 +121,11 @@ async function processPendingChasers() {
                     recipient_name: chaser.tasks?.assignee_name || 'there',
                     subject: chaser.message_subject || `Reminder: ${chaser.tasks?.title || 'Task'} due soon`,
                     body: chaser.message_body || `This is a reminder about your task.`,
+                    slack_message: slackMessage,
+                    slack_channel: chaser.tasks?.slack_channel || null,
+                    task_title: chaser.tasks?.title || 'Task',
+                    task_priority: chaser.tasks?.priority || 'medium',
+                    task_due_date: dueDate,
                     task_link: `${frontendUrl}/tasks/${chaser.task_id}`,
                     callback_url: `${backendUrl}/api/webhooks/boltic/chaser-sent`
                 };

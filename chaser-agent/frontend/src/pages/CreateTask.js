@@ -15,7 +15,8 @@ function CreateTask() {
         assignee_name: '',
         assignee_email: '',
         due_date: '',
-        priority: 'medium'
+        priority: 'medium',
+        slack_channel: ''
     });
     const [errors, setErrors] = useState({});
     const [loading, setLoading] = useState(false);
@@ -84,7 +85,8 @@ function CreateTask() {
                 assignee_name: formData.assignee_name.trim(),
                 assignee_email: formData.assignee_email.trim(),
                 due_date: new Date(formData.due_date).toISOString(),
-                priority: formData.priority
+                priority: formData.priority,
+                slack_channel: formData.slack_channel.trim() || null
             });
 
             setSuccess(true);
@@ -216,6 +218,27 @@ function CreateTask() {
                         <option value="medium">Medium</option>
                         <option value="high">High</option>
                     </select>
+                </div>
+
+                {/* Slack Channel (Optional) */}
+                <div className="form-group">
+                    <label className="form-label" htmlFor="slack_channel">
+                        Slack Channel (Optional)
+                    </label>
+                    <input
+                        type="text"
+                        id="slack_channel"
+                        name="slack_channel"
+                        className="form-input"
+                        placeholder="e.g., #project-alerts or project-alerts"
+                        value={formData.slack_channel}
+                        onChange={handleChange}
+                        disabled={loading}
+                        maxLength={100}
+                    />
+                    <small style={{ color: '#6B7280', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                        Leave empty to skip Slack notification. Bot must be in the channel.
+                    </small>
                 </div>
 
                 {/* Form Actions */}

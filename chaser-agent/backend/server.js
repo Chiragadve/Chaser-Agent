@@ -64,7 +64,7 @@ function isValidEmail(email) {
  */
 app.post('/api/tasks', async (req, res) => {
   try {
-    const { title, assignee_email, assignee_name, due_date, priority } = req.body;
+    const { title, assignee_email, assignee_name, due_date, priority, slack_channel } = req.body;
 
     // Validation
     if (!title || !title.trim()) {
@@ -82,6 +82,11 @@ app.post('/api/tasks', async (req, res) => {
       return errorResponse(res, 400, 'Invalid due date format');
     }
 
+    // Clean slack channel (remove # if present, trim whitespace)
+    const cleanSlackChannel = slack_channel
+      ? slack_channel.trim().replace(/^#/, '')
+      : null;
+
     // Insert task
     const { data: task, error: taskError } = await supabase
       .from('tasks')
@@ -91,7 +96,8 @@ app.post('/api/tasks', async (req, res) => {
         assignee_name: assignee_name?.trim() || null,
         due_date: dueDateTime.toISOString(),
         priority: priority || 'medium',
-        status: 'pending'
+        status: 'pending',
+        slack_channel: cleanSlackChannel
       })
       .select()
       .single();
