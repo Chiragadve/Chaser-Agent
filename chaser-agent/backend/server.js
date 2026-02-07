@@ -6,6 +6,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const axios = require('axios');
 const { createClient } = require('@supabase/supabase-js');
 const scheduler = require('./scheduler');
 
@@ -64,7 +65,7 @@ function isValidEmail(email) {
  */
 app.post('/api/tasks', async (req, res) => {
   try {
-    const { title, assignee_email, assignee_name, due_date, priority, slack_channel } = req.body;
+    const { title, assignee_email, assignee_name, due_date, priority, slack_channel, phone_number, enable_call } = req.body;
 
     // Validation
     if (!title || !title.trim()) {
@@ -97,7 +98,9 @@ app.post('/api/tasks', async (req, res) => {
         due_date: dueDateTime.toISOString(),
         priority: priority || 'medium',
         status: 'pending',
-        slack_channel: cleanSlackChannel
+        slack_channel: cleanSlackChannel,
+        phone_number: phone_number?.trim() || null,
+        enable_call: enable_call || false
       })
       .select()
       .single();
@@ -359,12 +362,161 @@ app.patch('/api/tasks/:id', async (req, res) => {
       } else {
         log(`Cancelled pending chasers for completed task: ${id}`);
       }
+
+      // Trigger Boltic to delete calendar event if exists
+      const bolticWebhookUrl = process.env.BOLTIC_WEBHOOK_URL;
+      if (bolticWebhookUrl && existingTask.calendar_event_id) {
+        const payload = {
+          queue_id: `delete-${id}-${Date.now()}`,
+          task_id: id,
+          action_type: 'delete',
+          calendar_event_id: existingTask.calendar_event_id,
+          recipient_email: existingTask.assignee_email,
+          recipient_name: existingTask.assignee_name || 'there',
+          subject: `Completed: ${existingTask.title}`,
+          body: `Great job! Your task "${existingTask.title}" has been marked as complete.`,
+          sms_message: `✅ Completed: ${existingTask.title}`,
+          slack_message: `✅ *Task Completed*\n📋 *Task:* ${existingTask.title}`,
+          slack_channel: existingTask.slack_channel || null,
+          task_title: existingTask.title,
+          event_start: new Date().toISOString(),
+          event_end: new Date().toISOString(),
+          event_check_start: new Date().toISOString(),
+          event_check_end: new Date().toISOString(),
+          event_summary: 'SKIP',
+          event_description: 'SKIP',
+          conflict_callback_url: `${process.env.BACKEND_PUBLIC_URL || 'http://localhost:3001'}/api/webhooks/boltic/calendar-conflict`,
+          event_created_callback_url: `${process.env.BACKEND_PUBLIC_URL || 'http://localhost:3001'}/api/webhooks/boltic/calendar-event-created`
+        };
+
+        try {
+          await axios.post(bolticWebhookUrl, payload, {
+            headers: { 'Content-Type': 'application/json' },
+            timeout: 10000
+          });
+          log(`✅ Boltic delete webhook triggered for task: ${existingTask.title}`);
+        } catch (bolticError) {
+          log('Warning: Failed to trigger Boltic delete webhook:', bolticError.message);
+        }
+      }
     }
 
     res.json(updatedTask);
 
   } catch (error) {
     log('Unexpected error in PATCH /api/tasks/:id:', error);
+    return errorResponse(res, 500, 'Internal server error');
+  }
+});
+
+/**
+ * POST /api/tasks/:id/update-timeline
+ * Update task timeline and trigger Boltic to update Google Calendar
+ */
+app.post('/api/tasks/:id/update-timeline', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { event_start, event_end } = req.body;
+
+    log('Received update-timeline request:', { id, event_start, event_end });
+
+    if (!event_start || !event_end) {
+      return errorResponse(res, 400, 'event_start and event_end are required');
+    }
+
+    // Fetch the task to get calendar_event_id
+    const { data: task, error: fetchError } = await supabase
+      .from('tasks')
+      .select('*')
+      .eq('id', id)
+      .single();
+
+    if (fetchError || !task) {
+      log('Task not found:', fetchError);
+      return errorResponse(res, 404, 'Task not found');
+    }
+
+    if (!task.calendar_event_id) {
+      return errorResponse(res, 400, 'Task does not have a calendar event to update. Create a chaser first.');
+    }
+
+    // Update task due_date
+    const { data: updatedTask, error: updateError } = await supabase
+      .from('tasks')
+      .update({
+        due_date: event_end,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (updateError) {
+      log('Error updating task:', updateError);
+      return errorResponse(res, 500, 'Failed to update task');
+    }
+
+    // Trigger Boltic webhook with action_type 'update'
+    const bolticWebhookUrl = process.env.BOLTIC_WEBHOOK_URL;
+    const backendUrl = process.env.BACKEND_PUBLIC_URL || `http://localhost:${process.env.PORT || 3001}`;
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+
+    if (bolticWebhookUrl) {
+      const dueDate = new Date(event_end).toLocaleString('en-US', {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit'
+      });
+
+      const payload = {
+        queue_id: `update-${id}-${Date.now()}`,
+        task_id: id,
+        action_type: 'update', // This tells Boltic to update instead of create
+        calendar_event_id: task.calendar_event_id,
+        recipient_email: task.assignee_email,
+        recipient_name: task.assignee_name || 'there',
+        recipient_phone: task.phone_number || null,
+        enable_call: false, // No calls for updates
+        subject: `Updated: ${task.title}`,
+        body: `Your task "${task.title}" has been rescheduled to ${dueDate}.`,
+        sms_message: `📋 Update: ${task.title} rescheduled to ${dueDate}.`,
+        call_message: null,
+        slack_message: `🔄 *Task Updated*\n📋 *Task:* ${task.title}\n📅 *New Due:* ${dueDate}`,
+        slack_channel: task.slack_channel || null,
+        task_title: task.title,
+        task_priority: task.priority || 'medium',
+        task_due_date: dueDate,
+        task_link: `${frontendUrl}/tasks/${id}`,
+        callback_url: `${backendUrl}/api/webhooks/boltic/chaser-sent`,
+        event_start: event_start,
+        event_end: event_end,
+        event_check_start: event_start,
+        event_check_end: event_end,
+        event_summary: `Task: ${task.title}`,
+        event_description: `Priority: ${(task.priority || 'medium').charAt(0).toUpperCase() + (task.priority || 'medium').slice(1)}\nAssignee: ${task.assignee_name || 'Unknown'}\n\nDue: ${dueDate}`,
+        conflict_callback_url: `${backendUrl}/api/webhooks/boltic/calendar-conflict`,
+        event_created_callback_url: `${backendUrl}/api/webhooks/boltic/calendar-created`
+      };
+
+      try {
+        await axios.post(bolticWebhookUrl, payload, {
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 10000
+        });
+        log(`✅ Boltic update webhook triggered for task: ${task.title}`);
+      } catch (bolticError) {
+        log('Warning: Failed to trigger Boltic webhook:', bolticError.message);
+        // Don't fail the request, task was still updated
+      }
+    }
+
+    res.json({ success: true, task: updatedTask, message: 'Timeline updated and calendar sync triggered' });
+
+  } catch (error) {
+    log('Unexpected error in POST /api/tasks/:id/update-timeline:', error);
     return errorResponse(res, 500, 'Internal server error');
   }
 });
@@ -575,6 +727,87 @@ app.post('/api/webhooks/boltic/chaser-failed', async (req, res) => {
 
   } catch (error) {
     log('Unexpected error in POST /api/webhooks/boltic/chaser-failed:', error);
+    return errorResponse(res, 500, 'Internal server error');
+  }
+});
+
+/**
+ * POST /api/webhooks/boltic/calendar-conflict
+ * Boltic callback when calendar conflict is detected
+ */
+app.post('/api/webhooks/boltic/calendar-conflict', async (req, res) => {
+  try {
+    const { task_id, has_conflict, conflict_with, conflict_end_time } = req.body;
+
+    log('📅 Received calendar-conflict webhook:', { task_id, has_conflict, conflict_with, conflict_end_time });
+
+    if (!task_id) {
+      return errorResponse(res, 400, 'task_id is required');
+    }
+
+    // Update task with conflict info
+    const { error: updateError } = await supabase
+      .from('tasks')
+      .update({
+        has_conflict: has_conflict || false,
+        conflict_with: conflict_with || null,
+        conflict_end_time: conflict_end_time || null,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', task_id);
+
+    if (updateError) {
+      log('Error updating task with conflict info:', updateError);
+      return errorResponse(res, 500, 'Failed to update task');
+    }
+
+    if (has_conflict) {
+      log(`⚠️ Calendar conflict detected for task ${task_id}: ${conflict_with}`);
+    } else {
+      log(`✅ No calendar conflicts for task ${task_id}`);
+    }
+
+    res.json({ success: true, has_conflict, conflict_with });
+
+  } catch (error) {
+    log('Unexpected error in POST /api/webhooks/boltic/calendar-conflict:', error);
+    return errorResponse(res, 500, 'Internal server error');
+  }
+});
+
+/**
+ * POST /api/webhooks/boltic/calendar-created
+ * Boltic callback when calendar event is created - saves the event ID for future updates
+ */
+app.post('/api/webhooks/boltic/calendar-created', async (req, res) => {
+  try {
+    const { task_id, calendar_event_id } = req.body;
+
+    log('📅 Received calendar-created webhook:', { task_id, calendar_event_id });
+
+    if (!task_id || !calendar_event_id) {
+      return errorResponse(res, 400, 'task_id and calendar_event_id are required');
+    }
+
+    // Update task with the calendar event ID
+    const { error: updateError } = await supabase
+      .from('tasks')
+      .update({
+        calendar_event_id: calendar_event_id,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', task_id);
+
+    if (updateError) {
+      log('Error updating task with calendar_event_id:', updateError);
+      return errorResponse(res, 500, 'Failed to save calendar event ID');
+    }
+
+    console.log(`✅ Calendar event ID saved for task ${task_id}: ${calendar_event_id}`);
+    res.json({ success: true, task_id, calendar_event_id });
+
+  } catch (error) {
+    log('Unexpected error in POST /api/webhooks/boltic/calendar-created:', error);
     return errorResponse(res, 500, 'Internal server error');
   }
 });

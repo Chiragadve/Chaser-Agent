@@ -11,14 +11,32 @@ const api = axios.create({
     headers: {
         'Content-Type': 'application/json'
     },
-    timeout: 10000
+    timeout: 30000 // Increased from 10s to 30s
 });
 
-// Response interceptor for error handling
+// Request interceptor for retry logic
+api.interceptors.request.use((config) => {
+    config.retryCount = config.retryCount || 0;
+    return config;
+});
+
+// Response interceptor for error handling with retry
 api.interceptors.response.use(
     (response) => response,
-    (error) => {
-        console.error('[API Error]', error.response?.data || error.message);
+    async (error) => {
+        const config = error.config;
+
+        // Retry once on timeout or network error
+        if ((error.code === 'ECONNABORTED' || !error.response) && config.retryCount < 1) {
+            config.retryCount += 1;
+            console.warn('[API] Retrying request...', config.url);
+            return api(config);
+        }
+
+        // Only log non-timeout errors to reduce console noise
+        if (error.code !== 'ECONNABORTED') {
+            console.error('[API Error]', error.response?.data || error.message);
+        }
         throw error;
     }
 );
@@ -110,6 +128,26 @@ export async function getStats() {
         return response.data;
     } catch (error) {
         const message = error.response?.data?.error || 'Failed to fetch stats';
+        throw new Error(message);
+    }
+}
+
+/**
+ * Update task timeline and trigger Google Calendar update
+ * @param {string} id - Task ID
+ * @param {string} eventStart - New start datetime ISO string
+ * @param {string} eventEnd - New end datetime ISO string
+ * @returns {Promise<Object>} Result with updated task
+ */
+export async function triggerTimelineUpdate(id, eventStart, eventEnd) {
+    try {
+        const response = await api.post(`/tasks/${id}/update-timeline`, {
+            event_start: eventStart,
+            event_end: eventEnd
+        });
+        return response.data;
+    } catch (error) {
+        const message = error.response?.data?.error || 'Failed to update timeline';
         throw new Error(message);
     }
 }

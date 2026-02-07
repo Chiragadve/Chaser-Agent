@@ -16,7 +16,9 @@ function CreateTask() {
         assignee_email: '',
         due_date: '',
         priority: 'medium',
-        slack_channel: ''
+        slack_channel: '',
+        phone_number: '',
+        enable_call: false
     });
     const [errors, setErrors] = useState({});
     const [loading, setLoading] = useState(false);
@@ -32,8 +34,8 @@ function CreateTask() {
 
     // Handle input changes
     const handleChange = (e) => {
-        const { name, value } = e.target;
-        setFormData(prev => ({ ...prev, [name]: value }));
+        const { name, value, type, checked } = e.target;
+        setFormData(prev => ({ ...prev, [name]: type === 'checkbox' ? checked : value }));
         // Clear field error when user types
         if (errors[name]) {
             setErrors(prev => ({ ...prev, [name]: null }));
@@ -86,7 +88,9 @@ function CreateTask() {
                 assignee_email: formData.assignee_email.trim(),
                 due_date: new Date(formData.due_date).toISOString(),
                 priority: formData.priority,
-                slack_channel: formData.slack_channel.trim() || null
+                slack_channel: formData.slack_channel.trim() || null,
+                phone_number: formData.phone_number.trim() || null,
+                enable_call: formData.enable_call
             });
 
             setSuccess(true);
@@ -238,6 +242,46 @@ function CreateTask() {
                     />
                     <small style={{ color: '#6B7280', fontSize: '12px', marginTop: '4px', display: 'block' }}>
                         Leave empty to skip Slack notification. Bot must be in the channel.
+                    </small>
+                </div>
+
+                {/* Phone Number (Optional) */}
+                <div className="form-group">
+                    <label className="form-label" htmlFor="phone_number">
+                        Phone Number (Optional)
+                    </label>
+                    <input
+                        type="tel"
+                        id="phone_number"
+                        name="phone_number"
+                        className="form-input"
+                        placeholder="e.g., +918767075038"
+                        value={formData.phone_number}
+                        onChange={handleChange}
+                        disabled={loading}
+                        maxLength={20}
+                    />
+                    <small style={{ color: '#6B7280', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                        Include country code. Used for SMS and phone call reminders.
+                    </small>
+                </div>
+
+                {/* Enable Call Toggle */}
+                <div className="form-group">
+                    <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
+                        <input
+                            type="checkbox"
+                            id="enable_call"
+                            name="enable_call"
+                            checked={formData.enable_call}
+                            onChange={handleChange}
+                            disabled={loading || !formData.phone_number.trim()}
+                            style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+                        />
+                        Enable Phone Call Reminder
+                    </label>
+                    <small style={{ color: '#6B7280', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                        When enabled, an automated voice call will be made in addition to SMS.
                     </small>
                 </div>
 

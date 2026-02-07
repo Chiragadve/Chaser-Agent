@@ -49,7 +49,9 @@ async function processPendingChasers() {
           due_date,
           status,
           priority,
-          slack_channel
+          slack_channel,
+          phone_number,
+          enable_call
         )
       `)
             .eq('status', 'pending')
@@ -84,7 +86,8 @@ async function processPendingChasers() {
             try {
                 // Prepare payload for Boltic
                 const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-                const backendUrl = `http://localhost:${process.env.PORT || 3001}`;
+                // Use public URL for Boltic callbacks (ngrok when testing locally)
+                const backendUrl = process.env.BACKEND_PUBLIC_URL || `http://localhost:${process.env.PORT || 3001}`;
 
                 // Format due date for display
                 const dueDate = chaser.tasks?.due_date
@@ -114,20 +117,47 @@ This is a friendly reminder about your upcoming task:
 _Best regards,_
 *Chaser Agent*`;
 
+                // Build SMS message
+                const smsMessage = `📋 Reminder: ${chaser.tasks?.title || 'Task'} is due ${dueDate}. Priority: ${(chaser.tasks?.priority || 'medium').charAt(0).toUpperCase() + (chaser.tasks?.priority || 'medium').slice(1)}.`;
+
+                // Build TTS call message
+                const callMessage = `Hello ${chaser.tasks?.assignee_name || 'there'}. This is a reminder from Chaser Agent about your task: ${chaser.tasks?.title || 'Task'}. It is due ${dueDate}. The priority is ${(chaser.tasks?.priority || 'medium').charAt(0).toUpperCase() + (chaser.tasks?.priority || 'medium').slice(1)}.`;
+
+                // Calendar event time windows
+                const taskDueDateTime = chaser.tasks?.due_date ? new Date(chaser.tasks.due_date) : new Date();
+                const eventStart = new Date(taskDueDateTime.getTime() - 30 * 60 * 1000); // 30 mins before due
+                const eventEnd = new Date(taskDueDateTime.getTime() + 30 * 60 * 1000);   // 30 mins after due
+                const eventCheckStart = new Date(taskDueDateTime.getTime() - 60 * 60 * 1000); // 1 hour before due
+                const eventCheckEnd = new Date(taskDueDateTime.getTime() + 30 * 60 * 1000);   // 30 mins after due
+
                 const payload = {
                     queue_id: chaser.id,
                     task_id: chaser.task_id,
+                    action_type: 'create', // For conditional calendar event creation
                     recipient_email: chaser.recipient_email,
                     recipient_name: chaser.tasks?.assignee_name || 'there',
+                    recipient_phone: chaser.tasks?.phone_number || null,
+                    enable_call: chaser.tasks?.enable_call || false,
                     subject: chaser.message_subject || `Reminder: ${chaser.tasks?.title || 'Task'} due soon`,
                     body: chaser.message_body || `This is a reminder about your task.`,
+                    sms_message: smsMessage,
+                    call_message: callMessage,
                     slack_message: slackMessage,
                     slack_channel: chaser.tasks?.slack_channel || null,
                     task_title: chaser.tasks?.title || 'Task',
                     task_priority: chaser.tasks?.priority || 'medium',
                     task_due_date: dueDate,
                     task_link: `${frontendUrl}/tasks/${chaser.task_id}`,
-                    callback_url: `${backendUrl}/api/webhooks/boltic/chaser-sent`
+                    callback_url: `${backendUrl}/api/webhooks/boltic/chaser-sent`,
+                    // Calendar conflict detection params
+                    event_start: eventStart.toISOString(),
+                    event_end: eventEnd.toISOString(),
+                    event_check_start: eventCheckStart.toISOString(),
+                    event_check_end: eventCheckEnd.toISOString(),
+                    event_summary: `Task: ${chaser.tasks?.title || 'Task'}`,
+                    event_description: `Priority: ${(chaser.tasks?.priority || 'medium').charAt(0).toUpperCase() + (chaser.tasks?.priority || 'medium').slice(1)}\nAssignee: ${chaser.tasks?.assignee_name || 'Unknown'}\n\nDue: ${dueDate}`,
+                    conflict_callback_url: `${backendUrl}/api/webhooks/boltic/calendar-conflict`,
+                    event_created_callback_url: `${backendUrl}/api/webhooks/boltic/calendar-created`
                 };
 
                 log(`🚀 Triggering Boltic webhook for task: ${chaser.tasks?.title}`);
