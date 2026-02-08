@@ -21,10 +21,9 @@ function TaskDetail() {
 
     // Timeline update modal state
     const [showTimelineModal, setShowTimelineModal] = useState(false);
-    const [timelineStart, setTimelineStart] = useState('');
-    const [timelineEnd, setTimelineEnd] = useState('');
-    const [isRecommendedStart, setIsRecommendedStart] = useState(true);
-    const [recommendedStart, setRecommendedStart] = useState('');
+    const [newDeadline, setNewDeadline] = useState('');
+    const [recommendedDeadline, setRecommendedDeadline] = useState('');
+    const [isRecommendedDeadline, setIsRecommendedDeadline] = useState(true);
     const [timelineLoading, setTimelineLoading] = useState(false);
 
     // Format date for display
@@ -112,34 +111,38 @@ function TaskDetail() {
     const handleOpenTimelineModal = () => {
         let recommended;
 
-        // Use the latest conflict event's end time as recommended start
+        // Use the latest conflict event's end time + 30 min as recommended deadline
         if (task?.conflict_end_time) {
-            // Use the stored conflict end time (latest calendar event deadline)
-            recommended = toLocalDatetime(task.conflict_end_time);
+            const conflictEnd = new Date(task.conflict_end_time);
+            conflictEnd.setMinutes(conflictEnd.getMinutes() + 30); // Add 30 min buffer
+            recommended = toLocalDatetime(conflictEnd.toISOString());
+        } else if (task?.due_date) {
+            // Fallback to current due_date
+            recommended = toLocalDatetime(task.due_date);
         } else {
-            // Fallback to task due_date if no conflict data
-            const taskDue = task?.due_date ? new Date(task.due_date) : new Date();
-            recommended = toLocalDatetime(taskDue.toISOString());
+            // Fallback to 24 hours from now
+            const tomorrow = new Date();
+            tomorrow.setHours(tomorrow.getHours() + 24);
+            recommended = toLocalDatetime(tomorrow.toISOString());
         }
 
-        setRecommendedStart(recommended);
-        setTimelineStart(recommended);
-        setTimelineEnd('');
-        setIsRecommendedStart(true);
+        setRecommendedDeadline(recommended);
+        setNewDeadline(recommended);
+        setIsRecommendedDeadline(true);
         setShowTimelineModal(true);
     };
 
-    // Handle start time change
-    const handleStartChange = (e) => {
+    // Handle deadline change
+    const handleDeadlineChange = (e) => {
         const value = e.target.value;
-        setTimelineStart(value);
-        setIsRecommendedStart(value === recommendedStart);
+        setNewDeadline(value);
+        setIsRecommendedDeadline(value === recommendedDeadline);
     };
 
     // Handle timeline update submit
     const handleTimelineSubmit = async () => {
-        if (!timelineStart || !timelineEnd) {
-            setError('Please fill in both start and end times');
+        if (!newDeadline) {
+            setError('Please set a deadline');
             return;
         }
 
@@ -147,22 +150,23 @@ function TaskDetail() {
         setError(null);
 
         try {
-            const startISO = new Date(timelineStart).toISOString();
-            const endISO = new Date(timelineEnd).toISOString();
+            const deadlineISO = new Date(newDeadline).toISOString();
+            // Calendar event is 1 minute at deadline time
+            const eventEndISO = new Date(new Date(newDeadline).getTime() + 60000).toISOString();
 
-            console.log('📅 Triggering timeline update:', { taskId: id, startISO, endISO });
+            console.log('📅 Triggering deadline update:', { taskId: id, deadline: deadlineISO });
 
-            const result = await triggerTimelineUpdate(id, startISO, endISO);
-            console.log('📅 Timeline update result:', result);
+            const result = await triggerTimelineUpdate(id, deadlineISO, eventEndISO);
+            console.log('📅 Deadline update result:', result);
 
-            setSuccessMessage('Timeline updated! Google Calendar sync triggered.');
+            setSuccessMessage('Deadline updated! Google Calendar sync triggered.');
             setShowTimelineModal(false);
 
             // Refresh task data
             setTimeout(fetchTask, 1000);
         } catch (err) {
-            console.error('Error updating timeline:', err);
-            setError(err.message || 'Failed to update timeline');
+            console.error('Error updating deadline:', err);
+            setError(err.message || 'Failed to update deadline');
         } finally {
             setTimelineLoading(false);
         }
@@ -390,7 +394,7 @@ function TaskDetail() {
                 </button>
             </div>
 
-            {/* Timeline Update Modal */}
+            {/* Deadline Update Modal */}
             {showTimelineModal && (
                 <div className="modal-overlay" onClick={() => setShowTimelineModal(false)}>
                     <div className="modal-content" onClick={e => e.stopPropagation()} style={{
@@ -401,12 +405,12 @@ function TaskDetail() {
                         width: '90%',
                         boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)'
                     }}>
-                        <h2 style={{ marginTop: 0, marginBottom: '20px' }}>📅 Update Task Timeline</h2>
+                        <h2 style={{ marginTop: 0, marginBottom: '20px' }}>📅 Update Deadline</h2>
 
-                        <div className="form-group" style={{ marginBottom: '16px' }}>
+                        <div className="form-group" style={{ marginBottom: '24px' }}>
                             <label style={{ display: 'block', marginBottom: '6px', fontWeight: '500' }}>
-                                Start Time
-                                {isRecommendedStart && (
+                                New Deadline
+                                {isRecommendedDeadline && (
                                     <span style={{
                                         marginLeft: '8px',
                                         fontSize: '12px',
@@ -421,8 +425,8 @@ function TaskDetail() {
                             </label>
                             <input
                                 type="datetime-local"
-                                value={timelineStart}
-                                onChange={handleStartChange}
+                                value={newDeadline}
+                                onChange={handleDeadlineChange}
                                 style={{
                                     width: '100%',
                                     padding: '10px 12px',
@@ -431,24 +435,9 @@ function TaskDetail() {
                                     fontSize: '14px'
                                 }}
                             />
-                        </div>
-
-                        <div className="form-group" style={{ marginBottom: '24px' }}>
-                            <label style={{ display: 'block', marginBottom: '6px', fontWeight: '500' }}>
-                                Deadline (End Time)
-                            </label>
-                            <input
-                                type="datetime-local"
-                                value={timelineEnd}
-                                onChange={(e) => setTimelineEnd(e.target.value)}
-                                style={{
-                                    width: '100%',
-                                    padding: '10px 12px',
-                                    border: '1px solid #D1D5DB',
-                                    borderRadius: '8px',
-                                    fontSize: '14px'
-                                }}
-                            />
+                            <small style={{ color: '#6B7280', marginTop: '6px', display: 'block' }}>
+                                Recommended based on your latest calendar commitments
+                            </small>
                         </div>
 
                         <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
@@ -462,14 +451,14 @@ function TaskDetail() {
                             <button
                                 className="btn btn-primary"
                                 onClick={handleTimelineSubmit}
-                                disabled={timelineLoading || !timelineStart || !timelineEnd}
+                                disabled={timelineLoading || !newDeadline}
                             >
                                 {timelineLoading ? (
                                     <>
                                         <LoadingSpinner /> Updating...
                                     </>
                                 ) : (
-                                    '📅 Update Calendar'
+                                    '📅 Update Deadline'
                                 )}
                             </button>
                         </div>

@@ -17,6 +17,12 @@ function Dashboard() {
     const [stats, setStats] = useState({ totalTasks: 0, pendingTasks: 0, chasersSentToday: 0 });
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
+    const [activeTab, setActiveTab] = useState('active'); // 'active' or 'history'
+
+    // Filter tasks based on active tab
+    const activeTasks = tasks.filter(t => t.status !== 'completed');
+    const completedTasks = tasks.filter(t => t.status === 'completed');
+    const displayedTasks = activeTab === 'active' ? activeTasks : completedTasks;
 
     // Format date for display
     const formatDate = (dateString) => {
@@ -125,30 +131,81 @@ function Dashboard() {
 
                     {/* Tasks Table */}
                     <div className="card">
-                        <div className="card-header">
+                        <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                             <h2 className="card-title">Tasks</h2>
+                            <div style={{ display: 'flex', gap: '4px', background: '#F3F4F6', borderRadius: '8px', padding: '4px' }}>
+                                <button
+                                    onClick={() => setActiveTab('active')}
+                                    style={{
+                                        padding: '8px 16px',
+                                        border: 'none',
+                                        borderRadius: '6px',
+                                        cursor: 'pointer',
+                                        fontWeight: 500,
+                                        fontSize: '14px',
+                                        transition: 'all 0.2s',
+                                        background: activeTab === 'active' ? 'white' : 'transparent',
+                                        color: activeTab === 'active' ? '#1F2937' : '#6B7280',
+                                        boxShadow: activeTab === 'active' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none'
+                                    }}
+                                >
+                                    📋 Active ({activeTasks.length})
+                                </button>
+                                <button
+                                    onClick={() => setActiveTab('history')}
+                                    style={{
+                                        padding: '8px 16px',
+                                        border: 'none',
+                                        borderRadius: '6px',
+                                        cursor: 'pointer',
+                                        fontWeight: 500,
+                                        fontSize: '14px',
+                                        transition: 'all 0.2s',
+                                        background: activeTab === 'history' ? 'white' : 'transparent',
+                                        color: activeTab === 'history' ? '#1F2937' : '#6B7280',
+                                        boxShadow: activeTab === 'history' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none'
+                                    }}
+                                >
+                                    ✅ History ({completedTasks.length})
+                                </button>
+                            </div>
                         </div>
 
-                        {tasks.length === 0 ? (
+                        {displayedTasks.length === 0 ? (
                             <div className="empty-state">
-                                <p>No tasks yet. Create your first task to get started!</p>
+                                <p>
+                                    {activeTab === 'active'
+                                        ? 'No active tasks. Create your first task to get started!'
+                                        : 'No completed tasks yet.'}
+                                </p>
                             </div>
                         ) : (
                             <div className="table-wrapper">
                                 <table className="table">
                                     <thead>
-                                        <tr>
-                                            <th>Title</th>
-                                            <th>Assignee</th>
-                                            <th>Due Date</th>
-                                            <th>Status</th>
-                                            <th>Priority</th>
-                                            <th>Chasers</th>
-                                            <th>Actions</th>
-                                        </tr>
+                                        {activeTab === 'active' ? (
+                                            <tr>
+                                                <th>Title</th>
+                                                <th>Assignee</th>
+                                                <th>Due Date</th>
+                                                <th>Status</th>
+                                                <th>Priority</th>
+                                                <th>Chasers</th>
+                                                <th>Actions</th>
+                                            </tr>
+                                        ) : (
+                                            <tr>
+                                                <th>Title</th>
+                                                <th>Assignee</th>
+                                                <th>Due Date</th>
+                                                <th>Completed</th>
+                                                <th>Priority</th>
+                                                <th>Actions</th>
+                                            </tr>
+                                        )}
                                     </thead>
                                     <tbody>
-                                        {tasks.map((task) => (
+                                        {displayedTasks.map((task) => (
                                             <tr key={task.id}>
                                                 <td>
                                                     <strong>{task.title}</strong>
@@ -160,22 +217,43 @@ function Dashboard() {
                                                     </div>
                                                 </td>
                                                 <td>{formatDate(task.due_date)}</td>
-                                                <td>
-                                                    <StatusBadge status={isOverdue(task) ? 'overdue' : task.status} />
-                                                </td>
-                                                <td>
-                                                    <PriorityBadge priority={task.priority} />
-                                                </td>
-                                                <td>
-                                                    <span style={{ fontWeight: 500 }}>
-                                                        {task.total_chasers_sent || 0} sent
-                                                    </span>
-                                                    {task.pending_chasers_count > 0 && (
-                                                        <span style={{ color: '#6B7280', fontSize: '12px' }}>
-                                                            {' '}({task.pending_chasers_count} pending)
-                                                        </span>
-                                                    )}
-                                                </td>
+                                                {activeTab === 'active' ? (
+                                                    <>
+                                                        <td>
+                                                            <StatusBadge status={isOverdue(task) ? 'overdue' : task.status} />
+                                                        </td>
+                                                        <td>
+                                                            <PriorityBadge priority={task.priority} />
+                                                        </td>
+                                                        <td>
+                                                            <span style={{ fontWeight: 500 }}>
+                                                                {task.total_chasers_sent || 0} sent
+                                                            </span>
+                                                            {task.pending_chasers_count > 0 && (
+                                                                <span style={{ color: '#6B7280', fontSize: '12px' }}>
+                                                                    {' '}({task.pending_chasers_count} pending)
+                                                                </span>
+                                                            )}
+                                                        </td>
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <td>
+                                                            <span style={{
+                                                                display: 'inline-flex',
+                                                                alignItems: 'center',
+                                                                gap: '4px',
+                                                                color: '#059669',
+                                                                fontWeight: 500
+                                                            }}>
+                                                                ✅ {formatDate(task.updated_at)}
+                                                            </span>
+                                                        </td>
+                                                        <td>
+                                                            <PriorityBadge priority={task.priority} />
+                                                        </td>
+                                                    </>
+                                                )}
                                                 <td>
                                                     <button
                                                         className="btn btn-secondary btn-sm"

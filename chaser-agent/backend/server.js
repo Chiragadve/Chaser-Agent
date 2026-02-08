@@ -110,102 +110,121 @@ app.post('/api/tasks', async (req, res) => {
       return errorResponse(res, 500, 'Failed to create task');
     }
 
-    // Calculate chaser scheduled time (1 hour before due date)
-    const chaserScheduledAt = new Date(dueDateTime.getTime() - 60 * 60 * 1000);
-    // Format scheduled time for email body
-    const formattedDueDate = dueDateTime.toLocaleString('en-US', {
-      weekday: 'long',
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit'
-    });
+    // IMMEDIATELY trigger Boltic to create calendar event
+    const bolticWebhookUrl = process.env.BOLTIC_WEBHOOK_URL;
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const backendUrl = process.env.BACKEND_PUBLIC_URL || `http://localhost:${process.env.PORT || 3001}`;
 
-    // Calculate relative time for subject line
-    const now = new Date();
-    const diffMs = dueDateTime.getTime() - now.getTime();
-    const diffHours = Math.round(diffMs / (1000 * 60 * 60));
-    const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
+    if (bolticWebhookUrl) {
+      // Calendar event: 1 minute slot at due time for tracking
+      const eventStart = new Date(dueDateTime.getTime());
+      const eventEnd = new Date(dueDateTime.getTime() + 60 * 1000); // 1 minute duration
 
-    let relativeTime = 'Soon';
-    if (diffDays >= 2) {
-      relativeTime = `in ${diffDays} days`;
-    } else if (diffDays === 1 || (diffHours >= 20 && diffHours < 48)) {
-      relativeTime = 'Tomorrow';
-    } else if (diffHours >= 2) {
-      relativeTime = `in ${diffHours} hours`;
-    } else if (diffHours === 1) {
-      relativeTime = 'in 1 hour';
-    } else {
-      relativeTime = 'Very Soon';
+      const calendarPayload = {
+        queue_id: `create-${task.id}-${Date.now()}`,
+        task_id: task.id,
+        action_type: 'create',
+        escalation_tier: 0, // Special tier for initial creation
+        hours_remaining: (dueDateTime.getTime() - Date.now()) / (1000 * 60 * 60),
+        recipient_email: task.assignee_email,
+        recipient_name: assignee_name || 'there',
+        recipient_phone: phone_number || null,
+        enable_call: false, // Don't call on creation
+        subject: `Task Created: ${task.title}`,
+        body: `Your task has been created and is due ${dueDateTime.toLocaleString()}.`,
+        sms_message: '', // No SMS on creation
+        call_message: '', // No call on creation
+        slack_message: `📋 *New Task Created*\n\n📋 *Task:* ${task.title}\n⚡ *Priority:* ${(priority || 'medium').charAt(0).toUpperCase() + (priority || 'medium').slice(1)}\n📅 *Due:* ${dueDateTime.toLocaleString()}\n\n<${frontendUrl}/tasks/${task.id}|🔗 View Task>`,
+        slack_channel: cleanSlackChannel,
+        task_title: task.title,
+        task_priority: priority || 'medium',
+        task_due_date: dueDateTime.toLocaleString(),
+        task_link: `${frontendUrl}/tasks/${task.id}`,
+        callback_url: `${backendUrl}/api/webhooks/boltic/chaser-sent`,
+        event_start: eventStart.toISOString(),
+        event_end: eventEnd.toISOString(),
+        event_check_start: eventStart.toISOString(),
+        event_check_end: eventEnd.toISOString(),
+        event_summary: `📋 Task Due: ${task.title}`,
+        event_description: `Priority: ${(priority || 'medium').charAt(0).toUpperCase() + (priority || 'medium').slice(1)}\nAssignee: ${assignee_name || 'Unknown'}\n\nDue: ${dueDateTime.toLocaleString()}\n\nLink: ${frontendUrl}/tasks/${task.id}`,
+        conflict_callback_url: `${backendUrl}/api/webhooks/boltic/calendar-conflict`,
+        event_created_callback_url: `${backendUrl}/api/webhooks/boltic/calendar-created`,
+        current_time_start: new Date().toISOString(),
+        current_time_end: new Date(Date.now() + 60000).toISOString()
+      };
+
+      try {
+        await axios.post(bolticWebhookUrl, calendarPayload, {
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 10000
+        });
+        log(`✅ Immediate calendar event creation triggered for task: ${task.title}`);
+      } catch (bolticError) {
+        log('Warning: Failed to trigger immediate calendar creation:', bolticError.message);
+      }
     }
 
-    const taskLink = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/tasks/${task.id}`;
+    const now = new Date();
 
-    const messageSubject = `Reminder: ${task.title} – Due ${relativeTime}`;
+    // Calculate chaser scheduled times for 4-tier escalation
+    // Tier 1: 24 hours before, Tier 2: 12 hours before, Tier 3: 4 hours before, Tier 4: 1 hour before
+    const escalationTiers = [
+      { tier: 1, hoursBeforeDue: 24, name: '24h reminder' },
+      { tier: 2, hoursBeforeDue: 12, name: '12h reminder' },
+      { tier: 3, hoursBeforeDue: 4, name: '4h urgent' },
+      { tier: 4, hoursBeforeDue: 1, name: '1h critical' }
+    ];
 
-    // Email body in HTML format for proper line breaks in email clients
-    const priorityFormatted = (priority || 'medium').charAt(0).toUpperCase() + (priority || 'medium').slice(1);
+    // now was already declared above in the calendar section, reuse it
+    const scheduledChasers = [];
 
-    const messageBody = `
-<div style="font-family: Arial, sans-serif; font-size: 14px; line-height: 1.6; color: #333;">
-  <p>Hi ${assignee_name || 'there'},</p>
-  
-  <p>This is a friendly reminder about your upcoming task:</p>
-  
-  <table style="margin: 16px 0; border-collapse: collapse;">
-    <tr>
-      <td style="padding: 8px 16px 8px 0; font-weight: bold;">Task:</td>
-      <td style="padding: 8px 0;">${task.title}</td>
-    </tr>
-    <tr>
-      <td style="padding: 8px 16px 8px 0; font-weight: bold;">Priority:</td>
-      <td style="padding: 8px 0;">${priorityFormatted}</td>
-    </tr>
-    <tr>
-      <td style="padding: 8px 16px 8px 0; font-weight: bold;">Due Date:</td>
-      <td style="padding: 8px 0;">${formattedDueDate}</td>
-    </tr>
-  </table>
-  
-  <p>
-    <a href="${taskLink}" style="display: inline-block; padding: 10px 20px; background-color: #4F46E5; color: white; text-decoration: none; border-radius: 6px;">
-      View Task
-    </a>
-  </p>
-  
-  <p style="margin-top: 24px;">
-    Best regards,<br>
-    <strong>Email Chaser System</strong>
-  </p>
-</div>
-`.trim();
+    for (const tierConfig of escalationTiers) {
+      const chaserTime = new Date(dueDateTime.getTime() - tierConfig.hoursBeforeDue * 60 * 60 * 1000);
 
-    // Insert chaser queue entry
-    const { data: chaserQueue, error: chaserError } = await supabase
-      .from('chaser_queue')
-      .insert({
+      // Only schedule if the chaser time is in the future
+      if (chaserTime > now) {
+        scheduledChasers.push({
+          task_id: task.id,
+          scheduled_at: chaserTime.toISOString(),
+          recipient_email: task.assignee_email,
+          message_subject: `Tier ${tierConfig.tier}: ${task.title} - ${tierConfig.name}`,
+          message_body: `Escalation tier ${tierConfig.tier} reminder`,
+          status: 'pending',
+          escalation_tier: tierConfig.tier
+        });
+      }
+    }
+
+    // If no future chasers (task due very soon), schedule one for now + 1 minute
+    if (scheduledChasers.length === 0) {
+      scheduledChasers.push({
         task_id: task.id,
-        scheduled_at: chaserScheduledAt.toISOString(),
+        scheduled_at: new Date(now.getTime() + 60 * 1000).toISOString(),
         recipient_email: task.assignee_email,
-        message_subject: messageSubject,
-        message_body: messageBody,
-        status: 'pending'
-      })
-      .select()
-      .single();
+        message_subject: `URGENT: ${task.title} - Due very soon!`,
+        message_body: `Immediate reminder - task due very soon`,
+        status: 'pending',
+        escalation_tier: 4
+      });
+    }
+
+    // Insert all chaser queue entries
+    const { data: chaserQueues, error: chaserError } = await supabase
+      .from('chaser_queue')
+      .insert(scheduledChasers)
+      .select();
 
     if (chaserError) {
-      log('Error creating chaser queue entry:', chaserError);
+      log('Error creating chaser queue entries:', chaserError);
       // Task was created, but chaser scheduling failed - log but don't fail
+    } else {
+      log(`Created task: ${task.id} with ${chaserQueues.length} escalation chasers scheduled`);
     }
-
-    log(`Created task: ${task.id} with chaser scheduled at ${chaserScheduledAt.toISOString()}`);
 
     res.status(201).json({
       ...task,
-      chaser_scheduled_at: chaserScheduledAt.toISOString()
+      chasers_scheduled: scheduledChasers.length,
+      first_chaser_at: scheduledChasers[0]?.scheduled_at
     });
 
   } catch (error) {
