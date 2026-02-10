@@ -22,8 +22,10 @@ function log(message, data = null) {
 /**
  * Process pending chasers that are due to be sent
  */
-async function processPendingChasers() {
-    if (!supabaseClient) {
+async function processPendingChasers(supabaseInstance = null) {
+    const client = supabaseInstance || supabaseClient;
+
+    if (!client) {
         log('⚠️ Supabase client not initialized');
         return;
     }
@@ -38,7 +40,7 @@ async function processPendingChasers() {
         const now = new Date().toISOString();
 
         // Query pending chasers that are due
-        const { data: pendingChasers, error } = await supabaseClient
+        const { data: pendingChasers, error } = await client
             .from('chaser_queue')
             .select(`
         *,
@@ -78,7 +80,7 @@ async function processPendingChasers() {
             // Skip if task is already completed
             if (chaser.tasks?.status === 'completed') {
                 log(`⏭️ Skipping chaser for completed task: ${chaser.tasks.title}`);
-                await supabaseClient
+                await client
                     .from('chaser_queue')
                     .update({ status: 'cancelled' })
                     .eq('id', chaser.id);
@@ -207,7 +209,7 @@ async function processPendingChasers() {
                 log(`✅ Boltic webhook triggered successfully for task: ${chaser.tasks?.title}`);
 
                 // Update chaser_queue status to 'triggered'
-                const { error: updateError } = await supabaseClient
+                const { error: updateError } = await client
                     .from('chaser_queue')
                     .update({
                         status: 'triggered',
@@ -224,7 +226,7 @@ async function processPendingChasers() {
                     webhookError.message);
 
                 // Update attempt timestamp but keep status as pending for retry
-                await supabaseClient
+                await client
                     .from('chaser_queue')
                     .update({
                         last_attempt_at: new Date().toISOString()
@@ -260,6 +262,7 @@ function start(supabase) {
     }, 5000);
 }
 
+// Export symbols
 module.exports = {
     start,
     processPendingChasers

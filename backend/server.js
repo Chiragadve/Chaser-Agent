@@ -995,19 +995,26 @@ app.use((req, res) => {
   res.status(404).json({ error: 'Endpoint not found' });
 });
 
-// Error handler
+// Health check endpoint
+app.get('/', (req, res) => {
+  res.send('Chaser Agent Backend is running');
+});
+
+// Error handling middleware
 app.use((err, req, res, next) => {
   log('Unhandled error:', err);
   res.status(500).json({ error: 'Internal server error' });
 });
 
-// Start server
-app.listen(PORT, () => {
-  log(`🚀 Chaser Agent Backend running on port ${PORT}`);
-  log(`📡 CORS enabled for: ${process.env.FRONTEND_URL || 'http://localhost:3000'}`);
+// Start server if run directly
+if (require.main === module) {
+  app.listen(PORT, () => {
+    log(`🚀 Chaser Agent Backend running on port ${PORT}`);
+    log(`📡 CORS enabled for: ${process.env.FRONTEND_URL || 'http://localhost:3000'}`);
 
-  // Start the scheduler
-  scheduler.start(supabase);
-});
+    // Start the scheduler locally
+    scheduler.start(supabase);
+  });
+}
 
 module.exports = app;
