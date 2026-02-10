@@ -5,6 +5,7 @@
 
 const cron = require('node-cron');
 const axios = require('axios');
+const { generateEmailHtml } = require('./emailTemplate');
 
 let supabaseClient = null;
 
@@ -124,13 +125,8 @@ async function processPendingChasers() {
                     ? `${Math.round(hoursRemaining * 60)} minutes`
                     : `${Math.round(hoursRemaining)} hours`;
 
-                // Tier-specific email subjects
-                const emailSubjects = {
-                    1: `Upcoming: ${chaser.tasks?.title} - Due in ${timeRemainingText}`,
-                    2: `Reminder: ${chaser.tasks?.title} - Due in ${timeRemainingText}`,
-                    3: `⚠️ Urgent: ${chaser.tasks?.title} - Only ${timeRemainingText} remaining!`,
-                    4: `🚨 CRITICAL: ${chaser.tasks?.title} - Immediate Action Required!`
-                };
+                // Generate HTML email content
+                const { subject, html } = generateEmailHtml(chaser.tasks, escalationTier, timeRemainingText, frontendUrl);
 
                 // Tier-specific Slack messages
                 const slackMessages = {
@@ -171,8 +167,10 @@ async function processPendingChasers() {
                     recipient_name: chaser.tasks?.assignee_name || 'there',
                     recipient_phone: chaser.tasks?.phone_number || null,
                     enable_call: chaser.tasks?.enable_call || false,
-                    subject: emailSubjects[escalationTier],
-                    body: chaser.message_body || `This is a reminder about your task.`,
+                    recipient_phone: chaser.tasks?.phone_number || null,
+                    enable_call: chaser.tasks?.enable_call || false,
+                    subject: subject,
+                    body: html,
                     sms_message: smsMessages[escalationTier],
                     call_message: callMessages[escalationTier],
                     slack_message: slackMessages[escalationTier],

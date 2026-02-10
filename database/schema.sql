@@ -16,7 +16,17 @@ CREATE TABLE tasks (
   total_chasers_sent INTEGER DEFAULT 0,
   last_chaser_sent_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW()
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  -- Phone/SMS Integration
+  phone_number TEXT,
+  enable_call BOOLEAN DEFAULT false,
+  -- Slack Integration
+  slack_channel VARCHAR(100),
+  -- Google Calendar Conflict
+  has_conflict BOOLEAN DEFAULT false,
+  conflict_with TEXT,
+  conflict_end_time TIMESTAMPTZ,
+  calendar_event_id TEXT
 );
 
 -- Table 2: chaser_queue
@@ -31,7 +41,9 @@ CREATE TABLE chaser_queue (
   message_body TEXT,
   sent_at TIMESTAMPTZ,
   last_attempt_at TIMESTAMPTZ,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  -- Escalation Tier
+  escalation_tier INTEGER DEFAULT 1
 );
 
 -- Table 3: chaser_logs
@@ -55,6 +67,10 @@ CREATE INDEX idx_tasks_due_date ON tasks(due_date);
 CREATE INDEX idx_queue_scheduled ON chaser_queue(scheduled_at) WHERE status = 'pending';
 CREATE INDEX idx_queue_task ON chaser_queue(task_id);
 CREATE INDEX idx_logs_task ON chaser_logs(task_id);
+
+-- New Indexes
+CREATE INDEX IF NOT EXISTS idx_tasks_has_conflict ON tasks(has_conflict) WHERE has_conflict = true;
+CREATE INDEX IF NOT EXISTS idx_chaser_queue_escalation_tier ON chaser_queue(escalation_tier);
 
 -- Success message
 SELECT 'All tables created successfully!' as result;

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { getTask, updateTask, triggerTimelineUpdate } from '../services/api';
+import { getTask, updateTask, triggerTimelineUpdate, sendNudge } from '../services/api';
 import StatusBadge from '../components/StatusBadge';
 import PriorityBadge from '../components/PriorityBadge';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -25,6 +25,7 @@ function TaskDetail() {
     const [recommendedDeadline, setRecommendedDeadline] = useState('');
     const [isRecommendedDeadline, setIsRecommendedDeadline] = useState(true);
     const [timelineLoading, setTimelineLoading] = useState(false);
+    const [nudgeLoading, setNudgeLoading] = useState(false);
 
     // Format date for display
     const formatDate = (dateString) => {
@@ -169,6 +170,26 @@ function TaskDetail() {
             setError(err.message || 'Failed to update deadline');
         } finally {
             setTimelineLoading(false);
+        }
+    };
+
+    // Handle manual nudge
+    const handleNudge = async () => {
+        setNudgeLoading(true);
+        setSuccessMessage(null);
+        setError(null);
+
+        try {
+            await sendNudge(id, { email: true, slack: true });
+            setSuccessMessage('👋 Nudge sent successfully via Email & Slack!');
+
+            // Refresh chaser history after a delay
+            setTimeout(fetchTask, 2000);
+        } catch (err) {
+            console.error('Error sending nudge:', err);
+            setError(err.message || 'Failed to send nudge');
+        } finally {
+            setNudgeLoading(false);
         }
     };
 
@@ -386,6 +407,20 @@ function TaskDetail() {
                         📅 Update Task Timeline
                     </button>
                 )}
+                <button
+                    className="btn btn-warning"
+                    onClick={handleNudge}
+                    disabled={nudgeLoading || actionLoading}
+                    style={{ backgroundColor: '#F59E0B', borderColor: '#D97706', color: 'white' }}
+                >
+                    {nudgeLoading ? (
+                        <>
+                            <LoadingSpinner /> Nudging...
+                        </>
+                    ) : (
+                        '👋 Nudge User'
+                    )}
+                </button>
                 <button
                     className="btn btn-secondary"
                     onClick={() => navigate('/')}

@@ -9,6 +9,7 @@ const cors = require('cors');
 const axios = require('axios');
 const { createClient } = require('@supabase/supabase-js');
 const scheduler = require('./scheduler');
+const { generateEmailHtml } = require('./emailTemplate');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -865,6 +866,121 @@ app.get('/api/stats', async (req, res) => {
 
   } catch (error) {
     log('Unexpected error in GET /api/stats:', error);
+    return errorResponse(res, 500, 'Internal server error');
+  }
+});
+
+/**
+ * POST /api/nudges
+   * Manually send a nudge for a task
+   */
+app.post('/api/nudges', async (req, res) => {
+  try {
+    const { taskId, channels } = req.body;
+    // channels: { email: boolean, slack: boolean, sms: boolean, call: boolean }
+
+    // Define URLs early
+    const backendUrl = process.env.BACKEND_PUBLIC_URL || `http://localhost:${process.env.PORT || 3001}`;
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+
+    if (!taskId) {
+      return errorResponse(res, 400, 'taskId is required');
+    }
+
+    // Fetch task
+    const { data: task, error: taskError } = await supabase
+      .from('tasks')
+      .select('*')
+      .eq('id', taskId)
+      .single();
+
+    if (taskError || !task) {
+      return errorResponse(res, 404, 'Task not found');
+    }
+
+    // Determine configured channels or defaults
+    const useEmail = channels?.email !== false; // Default true
+    const useSlack = channels?.slack === true || (channels?.slack !== false && !!task.slack_channel);
+    const useSms = channels?.sms === true;
+    const useCall = channels?.call === true;
+
+    // Calculate time remaining text
+    let timeRemainingText = 'Soon';
+    if (task.due_date) {
+      const diff = new Date(task.due_date) - new Date();
+      const hours = diff / (1000 * 60 * 60);
+      if (hours < 0) timeRemainingText = 'Overdue';
+      else if (hours < 1) timeRemainingText = `${Math.round(hours * 60)} minutes`;
+      else timeRemainingText = `${Math.round(hours)} hours`;
+    }
+
+    // Generate HTML email content
+    const { subject, html } = generateEmailHtml(task, 0, timeRemainingText, frontendUrl);
+
+    // Create chaser queue entry
+    const { data: chaser, error: queueError } = await supabase
+      .from('chaser_queue')
+      .insert({
+        task_id: task.id,
+        scheduled_at: new Date().toISOString(), // Now
+        recipient_email: task.assignee_email,
+        message_subject: subject,
+        message_body: html,
+        status: 'triggered', // Mark as triggered so scheduler doesn't pick it up (we send immediately)
+        escalation_tier: 0, // 0 for manual
+      })
+      .select()
+      .single();
+
+    if (queueError) {
+      log('Error creating chaser queue entry:', queueError);
+      return errorResponse(res, 500, 'Failed to create nudge record');
+    }
+
+    // Trigger Boltic
+    // Trigger Boltic
+    const bolticWebhookUrl = process.env.BOLTIC_WEBHOOK_URL;
+
+    if (bolticWebhookUrl) {
+      const payload = {
+        queue_id: chaser.id,
+        task_id: task.id,
+        action_type: 'notify',
+        recipient_email: task.assignee_email,
+        recipient_name: task.assignee_name || 'there',
+        recipient_phone: task.phone_number || null,
+        enable_call: useCall,
+        subject: subject,
+        body: html,
+        sms_message: useSms ? `👉 Nudge: ${task.title} - Please check on this.` : null,
+        call_message: useCall ? `Hello. This is a manual nudge for your task ${task.title}.` : null,
+        slack_message: useSlack ? `👋 *Nudge*\n\nJust checking in on this task:\n\n📋 *Task:* ${task.title}\n📅 *Due:* ${task.due_date ? new Date(task.due_date).toLocaleString() : 'No due date'}\n\nPlease provide a progress report.\n\n<${frontendUrl}/tasks/${task.id}|🔗 View Task>` : null,
+        slack_channel: task.slack_channel || null,
+        task_title: task.title,
+        task_link: `${frontendUrl}/tasks/${task.id}`,
+        callback_url: `${backendUrl}/api/webhooks/boltic/chaser-sent`,
+        // Include calendar fields to prevent Boltic errors if it expects them
+        event_start: new Date().toISOString(),
+        event_end: new Date().toISOString(),
+        event_check_start: new Date().toISOString(),
+        event_check_end: new Date().toISOString(),
+        conflict_callback_url: `${backendUrl}/api/webhooks/boltic/calendar-conflict`,
+        event_created_callback_url: `${backendUrl}/api/webhooks/boltic/calendar-created`
+      };
+
+      // Fire and forget (or await if we want to confirm trigger)
+      axios.post(bolticWebhookUrl, payload, { timeout: 10000 })
+        .then(() => log(`✅ Manual nudge triggered for task: ${task.title}`))
+        .catch(err => {
+          log('❌ Failed to trigger Boltic for manual nudge:', err.message);
+          // Optionally update status to failed in DB
+        });
+    }
+
+    res.json({ success: true, message: 'Nudge sent successfully' });
+
+  } catch (error) {
+    log('Unexpected error in POST /api/nudges:', error);
     return errorResponse(res, 500, 'Internal server error');
   }
 });

@@ -139,6 +139,25 @@ export async function getStats() {
  * @param {string} eventEnd - New end datetime ISO string
  * @returns {Promise<Object>} Result with updated task
  */
+/**
+ * Send a manual nudge for a task
+ * @param {string} taskId - Task ID
+ * @param {Object} channels - Channels to use { email, slack, sms, call }
+ * @returns {Promise<Object>} Result
+ */
+export async function sendNudge(taskId, channels) {
+    try {
+        const response = await api.post('/nudges', {
+            taskId,
+            channels
+        });
+        return response.data;
+    } catch (error) {
+        const message = error.response?.data?.error || 'Failed to send nudge';
+        throw new Error(message);
+    }
+}
+
 export async function triggerTimelineUpdate(id, eventStart, eventEnd) {
     try {
         const response = await api.post(`/tasks/${id}/update-timeline`, {
